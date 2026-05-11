@@ -696,53 +696,45 @@ export default function MechanicalKeyboard(props) {
     refillQueue()
   }, [refillQueue])
 
-  // Initial load: try to fetch the full batch of 10 from the AI.
+  // Initial load: show the first sentence immediately (zero wait) from local
+  // fallback, then silently fill the queue with AI sentences in the background.
+  // This guarantees the user can start typing the instant the page loads.
   useEffect(() => {
     let cancelled = false
-      ; (async () => {
-        setIsInitializing(true)
-        setStatusMessage("Generating 10 cybersecurity sentences with GLM...")
 
-        const fetched = await fetchSentencesFromApi(TARGET_QUEUE_SIZE, [])
+    // ── Step 1: Instant first sentence ─────────────────────────────────────
+    // Pick a fallback sentence not yet seen (respects localStorage history).
+    const first = pickFallback(usedSentencesRef.current)
+    usedSentencesRef.current.add(first.text.toLowerCase().trim())
+    setCurrentSentence(first)
+    setIsInitializing(false)
+    setStatusMessage("")
+
+      // ── Step 2: Background AI fill ──────────────────────────────────────────
+      ; (async () => {
+        const exclude = Array.from(usedSentencesRef.current)
+        const fetched = await fetchSentencesFromApi(TARGET_QUEUE_SIZE, exclude)
         if (cancelled) return
 
-        const unique: SentenceItem[] = []
-        const seen = new Set<string>()
+        const accepted: SentenceItem[] = []
         for (const s of fetched) {
           const key = s.text.toLowerCase().trim()
-          if (!seen.has(key)) {
-            seen.add(key)
-            unique.push(s)
+          if (!usedSentencesRef.current.has(key)) {
+            usedSentencesRef.current.add(key)
+            accepted.push(s)
           }
         }
 
-        // Fill any shortfall from local fallback to guarantee 10 ready-to-go.
-        if (unique.length < TARGET_QUEUE_SIZE) {
-          for (const fb of FALLBACK_SENTENCES) {
-            const key = fb.text.toLowerCase().trim()
-            if (!seen.has(key)) {
-              seen.add(key)
-              unique.push(fb)
-            }
-            if (unique.length >= TARGET_QUEUE_SIZE) break
-          }
+        if (accepted.length > 0) {
+          setSentenceQueue(accepted)
         }
 
-        const batch = unique.slice(0, TARGET_QUEUE_SIZE)
-        batch.forEach((s) => usedSentencesRef.current.add(s.text.toLowerCase().trim()))
-
-        const [first, ...rest] = batch
-        setCurrentSentence(first ?? null)
-        setSentenceQueue(rest)
-        setIsInitializing(false)
-        setStatusMessage("")
-
-        // If we had to top up with fallbacks, immediately try to refill with
-        // fresh AI content in the background.
-        if (fetched.length < TARGET_QUEUE_SIZE) {
+        // If the AI returned less than the target, top up with more AI calls.
+        if (accepted.length < TARGET_QUEUE_SIZE) {
           refillQueue()
         }
       })()
+
     return () => {
       cancelled = true
     }
@@ -1214,13 +1206,42 @@ export default function MechanicalKeyboard(props) {
     children: [
       practiceDisplay,
       renderedKeyboard,
+      // ── Achievement badge ─────────────────────────────────────────────────
+      // A small floating pill in the top-right corner that counts completed
+      // sentences. Uses key={completedCount} so it re-mounts and plays the
+      // bump animation on every increment.
+      showTextPreview
+        ? /*#__PURE__*/ _jsx("div", {
+          key: `badge-${completedCount}`,
+          style: {
+            position: "absolute",
+            top: "14px",
+            right: "18px",
+            display: "flex",
+            alignItems: "center",
+            gap: "5px",
+            backgroundColor: "rgba(255, 255, 255, 0.07)",
+            border: "1px solid rgba(255, 255, 255, 0.13)",
+            borderRadius: "999px",
+            padding: "5px 13px 5px 9px",
+            fontSize: "12px",
+            fontFamily: "'Fira Code', ui-monospace, monospace",
+            color: completedCount > 0 ? "rgba(255, 215, 80, 0.9)" : "rgba(255, 255, 255, 0.45)",
+            letterSpacing: "0.5px",
+            animation: completedCount > 0 ? "kbBadgePop 0.35s cubic-bezier(0.34,1.56,0.64,1) forwards" : "none",
+            userSelect: "none",
+            pointerEvents: "none",
+          },
+          children: completedCount > 0 ? `🏆 ${completedCount}` : `○ 0`,
+        })
+        : null,
       /*#__PURE__*/ _jsx("style", {
-        children: "@keyframes kbFadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}",
-      }),
+          children: "@keyframes kbFadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}@keyframes kbBadgePop{0%{transform:scale(1)}40%{transform:scale(1.25)}70%{transform:scale(0.95)}100%{transform:scale(1)}}",
+        }),
       /*#__PURE__*/ _jsx("link", {
-        href: "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Cairo:wght@400;500;600&display=swap",
-        rel: "stylesheet",
-      }),
+          href: "https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Cairo:wght@400;500;600&display=swap",
+          rel: "stylesheet",
+        }),
     ],
   })
 }
