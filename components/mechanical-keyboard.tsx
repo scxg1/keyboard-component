@@ -225,13 +225,36 @@ export default function MechanicalKeyboard(props) {
   const [currentSentence, setCurrentSentence] = useState<SentenceItem | null>(null)
   const [typedText, setTypedText] = useState("")
   const [sentenceQueue, setSentenceQueue] = useState<SentenceItem[]>([])
-  const [completedCount, setCompletedCount] = useState(0)
+  const [completedCount, setCompletedCount] = useState<number>(() => {
+    if (typeof window === "undefined") return 0
+    try {
+      const saved = localStorage.getItem("kb_completedCount")
+      return saved ? parseInt(saved, 10) : 0
+    } catch {
+      return 0
+    }
+  })
   const [isInitializing, setIsInitializing] = useState(true)
   const [statusMessage, setStatusMessage] = useState("Preparing cybersecurity sentences...")
   // (Old isTransitioning state removed — the transition is now driven purely
   // by a CSS key-remount animation so input is never blocked.)
   // Master de-duplication set: everything ever shown OR queued, lowercased.
-  const usedSentencesRef = useRef<Set<string>>(new Set())
+  // Initialised from localStorage so already-seen sentences are not repeated
+  // across page reloads.
+  const usedSentencesRef = useRef<Set<string>>(
+    new Set(
+      typeof window !== "undefined"
+        ? (() => {
+          try {
+            const saved = localStorage.getItem("kb_usedSentences")
+            return saved ? (JSON.parse(saved) as string[]) : []
+          } catch {
+            return []
+          }
+        })()
+        : []
+    )
+  )
   const isRefillingRef = useRef(false)
 
   // ---- Keyboard UI state (unchanged) ----
@@ -892,6 +915,22 @@ export default function MechanicalKeyboard(props) {
       }
     }
   }, [handleKeyDown, handleKeyUp])
+
+  // Persist typing progress to localStorage whenever a sentence is completed.
+  // This means the completed count and the set of seen sentences survive
+  // page reloads — the user continues from where they left off.
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      localStorage.setItem("kb_completedCount", String(completedCount))
+      localStorage.setItem(
+        "kb_usedSentences",
+        JSON.stringify(Array.from(usedSentencesRef.current)),
+      )
+    } catch {
+      // localStorage full — silently ignore.
+    }
+  }, [completedCount])
 
   // Blinking cursor effect
   useEffect(() => {
